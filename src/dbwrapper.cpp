@@ -4,10 +4,9 @@
 
 #include "dbwrapper.h"
 
+#include "fs.h"
 #include "util.h"
 #include "random.h"
-
-#include <boost/filesystem.hpp>
 
 #include <leveldb/cache.h>
 #include <leveldb/env.h>
@@ -21,8 +20,9 @@ public:
     // This code is adapted from posix_logger.h, which is why it is using vsprintf.
     // Please do not do this in normal code
     virtual void Logv(const char * format, va_list ap) override {
-            if (!LogAcceptCategory("leveldb"))
+            if (!LogAcceptCategory(BCLog::LEVELDB)) {
                 return;
+            }
             char buffer[500];
             for (int iter = 0; iter < 2; iter++) {
                 char* base;
@@ -90,7 +90,7 @@ static leveldb::Options GetOptions(size_t nCacheSize)
     return options;
 }
 
-CDBWrapper::CDBWrapper(const boost::filesystem::path& path, size_t nCacheSize, bool fMemory, bool fWipe, bool obfuscate)
+CDBWrapper::CDBWrapper(const fs::path& path, size_t nCacheSize, bool fMemory, bool fWipe, bool obfuscate)
 {
     penv = NULL;
     readoptions.verify_checksums = true;
@@ -108,7 +108,7 @@ CDBWrapper::CDBWrapper(const boost::filesystem::path& path, size_t nCacheSize, b
             leveldb::Status result = leveldb::DestroyDB(path.string(), options);
             dbwrapper_private::HandleError(result);
         }
-        TryCreateDirectory(path);
+        TryCreateDirectories(path);
         LogPrintf("Opening LevelDB in %s\n", path.string());
     }
     leveldb::Status status = leveldb::DB::Open(options, path.string(), &pdb);
@@ -209,4 +209,4 @@ const std::vector<unsigned char>& GetObfuscateKey(const CDBWrapper &w)
     return w.obfuscate_key;
 }
 
-};
+} // namespace dbwrapper_private

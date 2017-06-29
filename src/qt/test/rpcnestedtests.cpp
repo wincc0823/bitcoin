@@ -6,6 +6,7 @@
 
 #include "chainparams.h"
 #include "consensus/validation.h"
+#include "fs.h"
 #include "validation.h"
 #include "rpc/register.h"
 #include "rpc/server.h"
@@ -16,8 +17,6 @@
 
 #include <QDir>
 #include <QtGlobal>
-
-#include <boost/filesystem.hpp>
 
 static UniValue rpcNestedTest_rpc(const JSONRPCRequest& request)
 {
@@ -34,8 +33,6 @@ static const CRPCCommand vRPCCommands[] =
 
 void RPCNestedTests::rpcNestedTests()
 {
-    UniValue jsonRPCError;
-
     // do some test setup
     // could be moved to a more generic place when we add more tests on QT level
     const CChainParams& chainparams = Params();
@@ -156,5 +153,5 @@ void RPCNestedTests::rpcNestedTests()
     delete pblocktree;
     pblocktree = nullptr;
 
-    boost::filesystem::remove_all(boost::filesystem::path(path));
+    fs::remove_all(fs::path(path));
 }
