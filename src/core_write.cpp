@@ -1,21 +1,30 @@
-// Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2009-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "core_io.h"
+#include <core_io.h>
 
-#include "base58.h"
-#include "primitives/transaction.h"
-#include "script/script.h"
-#include "script/standard.h"
-#include "serialize.h"
-#include "streams.h"
+#include <consensus/consensus.h>
+#include <consensus/validation.h>
+#include <key_io.h>
+#include <script/script.h>
+#include <script/standard.h>
+#include <serialize.h>
+#include <streams.h>
 #include <univalue.h>
-#include "util.h"
-#include "utilmoneystr.h"
-#include "utilstrencodings.h"
+#include <util.h>
+#include <utilmoneystr.h>
+#include <utilstrencodings.h>
 
-#include <boost/foreach.hpp>
+UniValue ValueFromAmount(const CAmount& amount)
+{
+    bool sign = amount < 0;
+    int64_t n_abs = (sign ? -amount : amount);
+    int64_t quotient = n_abs / COIN;
+    int64_t remainder = n_abs % COIN;
+    return UniValue(UniValue::VNUM,
+            strprintf("%s%d.%08d", sign ? "-" : "", quotient, remainder));
+}
 
 std::string FormatScript(const CScript& script)
 {
@@ -25,7 +34,7 @@ std::string FormatScript(const CScript& script)
     while (it != script.end()) {
         CScript::const_iterator it2 = it;
         std::vector<unsigned char> vch;
-        if (script.GetOp2(it, op, &vch)) {
+        if (script.GetOp(it, op, vch)) {
             if (op == OP_0) {
                 ret += "0 ";
                 continue;
@@ -61,6 +70,13 @@ const std::map<unsigned char, std::string> mapSigHashTypes = {
     {static_cast<unsigned char>(SIGHASH_SINGLE|SIGHASH_ANYONECANPAY), std::string("SINGLE|ANYONECANPAY")},
 };
 
+std::string SighashToStr(unsigned char sighash_type)
+{
+    const auto& it = mapSigHashTypes.find(sighash_type);
+    if (it == mapSigHashTypes.end()) return "";
+    return it->second;
+}
+
 /**
  * Create the assembly string representation of a CScript object.
  * @param[in] script    CScript object to convert into the asm string representation.
@@ -93,7 +109,7 @@ std::string ScriptToAsmStr(const CScript& script, const bool fAttemptSighashDeco
                     // this won't decode correctly formatted public keys in Pubkey or Multisig scripts due to
                     // the restrictions on the pubkey formats (see IsCompressedOrUncompressedPubKey) being incongruous with the
                     // checks in CheckSignatureEncoding.
-                    if (CheckSignatureEncoding(vch, SCRIPT_VERIFY_STRICTENC, NULL)) {
+                    if (CheckSignatureEncoding(vch, SCRIPT_VERIFY_STRICTENC, nullptr)) {
                         const unsigned char chSigHashType = vch.back();
                         if (mapSigHashTypes.count(chSigHashType)) {
                             strSigHashDecode = "[" + mapSigHashTypes.find(chSigHashType)->second + "]";
@@ -119,6 +135,21 @@ std::string EncodeHexTx(const CTransaction& tx, const int serializeFlags)
     return HexStr(ssTx.begin(), ssTx.end());
 }
 
+void ScriptToUniv(const CScript& script, UniValue& out, bool include_address)
+{
+    out.pushKV("asm", ScriptToAsmStr(script));
+    out.pushKV("hex", HexStr(script.begin(), script.end()));
+
+    std::vector<std::vector<unsigned char>> solns;
+    txnouttype type = Solver(script, solns);
+    out.pushKV("type", GetTxnOutputType(type));
+
+    CTxDestination address;
+    if (include_address && ExtractDestination(script, address)) {
+        out.pushKV("address", EncodeDestination(address));
+    }
+}
+
 void ScriptPubKeyToUniv(const CScript& scriptPubKey,
                         UniValue& out, bool fIncludeHex)
 {
@@ -139,18 +170,20 @@ void ScriptPubKeyToUniv(const CScript& scriptPubKey,
     out.pushKV("type", GetTxnOutputType(type));
 
     UniValue a(UniValue::VARR);
-    for (const CTxDestination& addr : addresses)
-        a.push_back(CBitcoinAddress(addr).ToString());
+    for (const CTxDestination& addr : addresses) {
+        a.push_back(EncodeDestination(addr));
+    }
     out.pushKV("addresses", a);
 }
 
-void TxToUniv(const CTransaction& tx, const uint256& hashBlock, UniValue& entry)
+void TxToUniv(const CTransaction& tx, const uint256& hashBlock, UniValue& entry, bool include_hex, int serialize_flags)
 {
     entry.pushKV("txid", tx.GetHash().GetHex());
     entry.pushKV("hash", tx.GetWitnessHash().GetHex());
     entry.pushKV("version", tx.nVersion);
     entry.pushKV("size", (int)::GetSerializeSize(tx, SER_NETWORK, PROTOCOL_VERSION));
     entry.pushKV("vsize", (GetTransactionWeight(tx) + WITNESS_SCALE_FACTOR - 1) / WITNESS_SCALE_FACTOR);
+    entry.pushKV("weight", GetTransactionWeight(tx));
     entry.pushKV("locktime", (int64_t)tx.nLockTime);
 
     UniValue vin(UniValue::VARR);
@@ -185,8 +218,7 @@ void TxToUniv(const CTransaction& tx, const uint256& hashBlock, UniValue& entry)
 
         UniValue out(UniValue::VOBJ);
 
-        UniValue outValue(UniValue::VNUM, FormatMoney(txout.nValue));
-        out.pushKV("value", outValue);
+        out.pushKV("value", ValueFromAmount(txout.nValue));
         out.pushKV("n", (int64_t)i);
 
         UniValue o(UniValue::VOBJ);
@@ -199,5 +231,7 @@ void TxToUniv(const CTransaction& tx, const uint256& hashBlock, UniValue& entry)
     if (!hashBlock.IsNull())
         entry.pushKV("blockhash", hashBlock.GetHex());
 
-    entry.pushKV("hex", EncodeHexTx(tx)); // the hex-encoded transaction. used the name "hex" to be consistent with the verbose output of "getrawtransaction".
+    if (include_hex) {
+        entry.pushKV("hex", EncodeHexTx(tx, serialize_flags)); // The hex-encoded transaction. Used the name "hex" to be consistent with the verbose output of "getrawtransaction".
+    }
 }

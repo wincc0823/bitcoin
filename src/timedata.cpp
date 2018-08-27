@@ -1,24 +1,23 @@
-// Copyright (c) 2014-2016 The Bitcoin Core developers
+// Copyright (c) 2014-2018 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #if defined(HAVE_CONFIG_H)
-#include "config/bitcoin-config.h"
+#include <config/bitcoin-config.h>
 #endif
 
-#include "timedata.h"
+#include <timedata.h>
 
-#include "netaddress.h"
-#include "sync.h"
-#include "ui_interface.h"
-#include "util.h"
-#include "utilstrencodings.h"
-#include "warnings.h"
+#include <netaddress.h>
+#include <sync.h>
+#include <ui_interface.h>
+#include <util.h>
+#include <utilstrencodings.h>
+#include <warnings.h>
 
-#include <boost/foreach.hpp>
 
 static CCriticalSection cs_nTimeOffset;
-static int64_t nTimeOffset = 0;
+static int64_t nTimeOffset GUARDED_BY(cs_nTimeOffset) = 0;
 
 /**
  * "Never go to sea with two chronometers; take one or three."
@@ -82,7 +81,7 @@ void AddTimeData(const CNetAddr& ip, int64_t nOffsetSample)
         int64_t nMedian = vTimeOffsets.median();
         std::vector<int64_t> vSorted = vTimeOffsets.sorted();
         // Only let other nodes change our time by so much
-        if (abs64(nMedian) <= std::max<int64_t>(0, GetArg("-maxtimeadjustment", DEFAULT_MAX_TIME_ADJUSTMENT)))
+        if (abs64(nMedian) <= std::max<int64_t>(0, gArgs.GetArg("-maxtimeadjustment", DEFAULT_MAX_TIME_ADJUSTMENT)))
         {
             nTimeOffset = nMedian;
         }
@@ -111,9 +110,9 @@ void AddTimeData(const CNetAddr& ip, int64_t nOffsetSample)
 
         if (LogAcceptCategory(BCLog::NET)) {
             for (int64_t n : vSorted) {
-                LogPrint(BCLog::NET, "%+d  ", n);
+                LogPrint(BCLog::NET, "%+d  ", n); /* Continued */
             }
-            LogPrint(BCLog::NET, "|  ");
+            LogPrint(BCLog::NET, "|  "); /* Continued */
 
             LogPrint(BCLog::NET, "nTimeOffset = %+d  (%+d minutes)\n", nTimeOffset, nTimeOffset/60);
         }
